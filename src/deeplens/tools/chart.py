@@ -56,7 +56,7 @@ def _sentiment_pie_chart(sentiment: SentimentResult, output_dir: str) -> str | N
         colors = ["#4CAF50", "#9E9E9E", "#F44336"]
 
         fig, ax = plt.subplots(figsize=(7, 5))
-        wedges, texts, autotexts = ax.pie(
+        wedges, texts, autotexts = ax.pie(  # type: ignore[misc]
             sizes,
             labels=labels,
             colors=colors,

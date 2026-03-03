@@ -51,3 +51,4 @@ class DeepLensState(TypedDict):
     iteration_count: int
     max_iterations: int
     errors: list[str]
+    executed_queries: list[str]

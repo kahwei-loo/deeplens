@@ -9,7 +9,7 @@ YouTube API is optional enrichment when configured and relevant.
 """
 
 import logging
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -140,12 +140,12 @@ def supervisor_agent(state: DeepLensState) -> dict:
     structured_llm = llm.with_structured_output(SupervisorDecision)
 
     try:
-        decision: SupervisorDecision = structured_llm.invoke(
+        decision = cast(SupervisorDecision, structured_llm.invoke(
             [
                 {"role": "system", "content": SUPERVISOR_SYSTEM_PROMPT},
                 {"role": "user", "content": state_summary},
             ]
-        )
+        ))
     except Exception as e:
         logger.error("[Supervisor] LLM call failed: %s", e)
         errors = state.get("errors", [])

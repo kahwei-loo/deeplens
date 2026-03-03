@@ -15,6 +15,7 @@ meaningful research reports using web data alone.
 """
 
 import logging
+from typing import cast
 
 from pydantic import BaseModel, Field
 
@@ -119,6 +120,7 @@ def research_agent(state: DeepLensState) -> dict:
     existing_comments = list(state.get("comments") or [])
     existing_sources = list(state.get("sources") or [])
     existing_channel = state.get("channel_data")
+    executed_queries = list(state.get("executed_queries") or [])
 
     # Build context for planning LLM
     context_parts = [f"User query: {query}"]
@@ -145,12 +147,12 @@ def research_agent(state: DeepLensState) -> dict:
     structured_llm = llm.with_structured_output(ResearchPlan)
 
     try:
-        plan: ResearchPlan = structured_llm.invoke(
+        plan = cast(ResearchPlan, structured_llm.invoke(
             [
                 {"role": "system", "content": RESEARCH_PLAN_PROMPT},
                 {"role": "user", "content": context},
             ]
-        )
+        ))
         logger.info(
             "[Research] entity_type=%s, queries=%d, youtube=%s",
             plan.entity_type,
@@ -174,8 +176,14 @@ def research_agent(state: DeepLensState) -> dict:
         }
 
     # ── Phase 2: Multi-angle web search (Perplexity pattern) ─────
-    search_queries = [sq.query for sq in plan.search_queries]
+    search_queries = [
+        sq.query for sq in plan.search_queries
+        if sq.query not in executed_queries
+    ]
+    if not search_queries:
+        logger.info("[Research] All planned queries already executed, skipping search")
     new_web_results = multi_query_search(search_queries, max_results_per_query=5)
+    executed_queries.extend(search_queries)
     new_sources: list[Source] = [
         Source(url=r["url"], title=r["title"], source_type="web")
         for r in new_web_results
@@ -294,6 +302,7 @@ def research_agent(state: DeepLensState) -> dict:
         "comments": all_comments,
         "sources": all_sources,
         "errors": errors,
+        "executed_queries": executed_queries,
     }
 
     if channel_data is not None:

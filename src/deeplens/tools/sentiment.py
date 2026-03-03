@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel
 
@@ -92,9 +92,9 @@ def sentiment_analyzer(comments: list[CommentData]) -> SentimentResult:
         )
 
         try:
-            result: CommentSentiment = structured_llm.invoke(
+            result = cast(CommentSentiment, structured_llm.invoke(
                 SENTIMENT_PROMPT.format(comments=batch_texts)
-            )
+            ))
 
             for entry in result.classifications:
                 if entry.sentiment == "positive":

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 from tavily import TavilyClient
@@ -41,7 +41,7 @@ def _get_tavily_client() -> TavilyClient:
 def _tavily_search(query: str, max_results: int, search_depth: str) -> dict[str, Any]:
     """Execute a single Tavily search call with retry on transient errors."""
     client = _get_tavily_client()
-    return client.search(query=query, max_results=max_results, search_depth=search_depth)
+    return cast(dict[str, Any], client.search(query=query, max_results=max_results, search_depth=search_depth))
 
 
 @retry(
@@ -53,7 +53,7 @@ def _tavily_search(query: str, max_results: int, search_depth: str) -> dict[str,
 def _tavily_extract(urls: list[str]) -> dict[str, Any]:
     """Execute a Tavily extract call with retry on transient errors."""
     client = _get_tavily_client()
-    return client.extract(urls=urls)
+    return cast(dict[str, Any], client.extract(urls=urls))
 
 
 def web_search(

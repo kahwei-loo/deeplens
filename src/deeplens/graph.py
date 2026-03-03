@@ -6,7 +6,10 @@ After Research or Analysis, control returns to Supervisor for re-evaluation.
 After Report, the graph terminates.
 """
 
+from typing import Any
+
 from langgraph.graph import END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 from deeplens.agents.analysis import analysis_agent
 from deeplens.agents.report import report_agent
@@ -16,7 +19,7 @@ from deeplens.config import get_settings
 from deeplens.state import DeepLensState
 
 
-def create_graph() -> StateGraph:
+def create_graph() -> CompiledStateGraph[Any]:
     """Build and compile the DeepLens agent graph.
 
     Returns a compiled LangGraph that can be invoked with an initial state.
@@ -87,4 +90,5 @@ def build_initial_state(query: str) -> DeepLensState:
         iteration_count=0,
         max_iterations=settings.max_iterations,
         errors=[],
+        executed_queries=[],
     )

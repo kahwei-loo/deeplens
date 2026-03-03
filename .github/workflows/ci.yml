@@ -22,5 +22,7 @@ jobs:
         run: uv pip install -e ".[dev]" --system
       - name: Lint with ruff
         run: ruff check .
+      - name: Type check with mypy
+        run: uv run mypy src/ --ignore-missing-imports
       - name: Run tests
         run: pytest --tb=short -q

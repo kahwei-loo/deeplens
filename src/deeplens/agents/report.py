@@ -71,7 +71,11 @@ def report_agent(state: DeepLensState) -> dict:
     sentiment = state.get("sentiment")
 
     try:
-        charts = generate_charts(statistics=statistics, sentiment=sentiment)
+        charts = generate_charts(
+            statistics=statistics,
+            sentiment=sentiment,
+            output_dir=settings.output_dir,
+        )
         logger.info("[Report] Generated %d charts", len(charts))
     except Exception as e:
         error_msg = f"Chart generation failed: {e}"
@@ -103,7 +107,7 @@ def report_agent(state: DeepLensState) -> dict:
     out = Path(settings.output_dir)
     out.mkdir(parents=True, exist_ok=True)
     report_path = out / "report.md"
-    report_path.write_text(report_markdown, encoding="utf-8")
+    report_path.write_text(str(report_markdown), encoding="utf-8")
     logger.info("[Report] Saved to %s", report_path)
 
     return {
@@ -240,9 +244,9 @@ def _build_report_context(state: DeepLensState, chart_paths: list[str]) -> str:
     # Sources (capped to avoid token blowout)
     sources = state.get("sources") or []
     if sources:
-        capped = sources[:30]
-        lines.append(f"## Sources ({len(capped)} of {len(sources)})")
-        for s in capped:
+        capped_sources = sources[:30]
+        lines.append(f"## Sources ({len(capped_sources)} of {len(sources)})")
+        for s in capped_sources:
             title = s.get("title", "Source")
             url = s.get("url", "")
             stype = s.get("source_type", "")

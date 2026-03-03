@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -36,9 +36,9 @@ def _get_youtube_client() -> YouTubeResource:
     retry=retry_if_exception_type((ConnectionError, TimeoutError)),
     reraise=True,
 )
-def _yt_search_list(client: YouTubeResource, **kwargs) -> dict:
+def _yt_search_list(client: YouTubeResource, **kwargs) -> dict[str, Any]:
     """Execute a YouTube search.list call with retry on transient errors."""
-    return client.search().list(**kwargs).execute()
+    return cast(dict[str, Any], client.search().list(**kwargs).execute())
 
 
 @retry(
@@ -47,9 +47,9 @@ def _yt_search_list(client: YouTubeResource, **kwargs) -> dict:
     retry=retry_if_exception_type((ConnectionError, TimeoutError)),
     reraise=True,
 )
-def _yt_videos_list(client: YouTubeResource, **kwargs) -> dict:
+def _yt_videos_list(client: YouTubeResource, **kwargs) -> dict[str, Any]:
     """Execute a YouTube videos.list call with retry on transient errors."""
-    return client.videos().list(**kwargs).execute()
+    return cast(dict[str, Any], client.videos().list(**kwargs).execute())
 
 
 @retry(
@@ -58,9 +58,9 @@ def _yt_videos_list(client: YouTubeResource, **kwargs) -> dict:
     retry=retry_if_exception_type((ConnectionError, TimeoutError)),
     reraise=True,
 )
-def _yt_channels_list(client: YouTubeResource, **kwargs) -> dict:
+def _yt_channels_list(client: YouTubeResource, **kwargs) -> dict[str, Any]:
     """Execute a YouTube channels.list call with retry on transient errors."""
-    return client.channels().list(**kwargs).execute()
+    return cast(dict[str, Any], client.channels().list(**kwargs).execute())
 
 
 @retry(
@@ -69,9 +69,9 @@ def _yt_channels_list(client: YouTubeResource, **kwargs) -> dict:
     retry=retry_if_exception_type((ConnectionError, TimeoutError)),
     reraise=True,
 )
-def _yt_comment_threads_list(client: YouTubeResource, **kwargs) -> dict:
+def _yt_comment_threads_list(client: YouTubeResource, **kwargs) -> dict[str, Any]:
     """Execute a YouTube commentThreads.list call with retry on transient errors."""
-    return client.commentThreads().list(**kwargs).execute()
+    return cast(dict[str, Any], client.commentThreads().list(**kwargs).execute())
 
 
 # ---------------------------------------------------------------------------

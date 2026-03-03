@@ -7,11 +7,12 @@ This agent processes data collected by the Research agent. It handles three path
 """
 
 import logging
+from typing import cast
 
 from pydantic import BaseModel, Field
 
 from deeplens.config import get_llm
-from deeplens.models import WebAnalysis
+from deeplens.models import WebAnalysis, WebArticle
 from deeplens.state import DeepLensState
 from deeplens.tools.sentiment import sentiment_analyzer
 from deeplens.tools.statistics import compute_statistics
@@ -33,7 +34,7 @@ class WebAnalysisResult(BaseModel):
     )
 
 
-def _analyze_web_articles(articles: list[dict]) -> WebAnalysis | None:
+def _analyze_web_articles(articles: list[WebArticle]) -> WebAnalysis | None:
     """Extract key themes, entities, and summary from web articles using LLM.
 
     Returns a dict with key_themes, entity_mentions, and summary, or None on failure.
@@ -73,7 +74,7 @@ def _analyze_web_articles(articles: list[dict]) -> WebAnalysis | None:
         ]
     )
 
-    return response.model_dump()
+    return cast(WebAnalysis, cast(WebAnalysisResult, response).model_dump())
 
 
 def analysis_agent(state: DeepLensState) -> dict:
@@ -97,13 +98,14 @@ def analysis_agent(state: DeepLensState) -> dict:
     if videos:
         try:
             statistics = compute_statistics(videos)
-            logger.info(
-                "[Analysis] Statistics computed for %d videos — "
-                "avg views: %s, avg engagement: %s",
-                len(videos),
-                f"{statistics.get('avg_views', 0):,.0f}",
-                f"{statistics.get('avg_engagement_rate', 0):.2%}",
-            )
+            if statistics is not None:
+                logger.info(
+                    "[Analysis] Statistics computed for %d videos — "
+                    "avg views: %s, avg engagement: %s",
+                    len(videos),
+                    f"{statistics.get('avg_views', 0):,.0f}",
+                    f"{statistics.get('avg_engagement_rate', 0):.2%}",
+                )
         except Exception as e:
             error_msg = f"Statistics computation failed: {e}"
             logger.error("[Analysis] %s", error_msg)
