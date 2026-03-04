@@ -1,0 +1,37 @@
+# Virtual environment
+.venv/
+
+# Claude Code & local dev notes
+.claude/
+CLAUDE.md
+notes/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+
+# Output
+output/
+
+# Local sample reports (not for commit)
+docs/sample-report-*.md
+
+# Streamlit local config
+.streamlit/
+
+# Playwright MCP cache
+.playwright-mcp/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
