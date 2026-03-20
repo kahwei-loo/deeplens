@@ -10,12 +10,14 @@ import logging
 from pathlib import Path
 
 import typer
+from langchain_community.callbacks import get_openai_callback
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
 
 from deeplens.config import get_settings, validate_settings
 from deeplens.graph import build_initial_state, create_graph, stream_with_timeout
+from deeplens.tools.validation import report_quality_summary, validate_report
 
 app = typer.Typer(
     name="deeplens",
@@ -88,15 +90,20 @@ def research(
 
         console.print("[dim]Starting agent graph...[/]\n")
 
-        # Stream with timeout — avoids hanging if Tavily or OpenAI stops responding
-        final_state = None
-        timeout = get_settings().graph_timeout_seconds
-        for event in stream_with_timeout(graph, initial_state, timeout):
-            final_state = event
-            next_agent = event.get("next_agent", "")
-            iteration = event.get("iteration_count", 0)
-            if next_agent:
-                console.print(f"  [cyan]->[/] iter={iteration} next=[bold]{next_agent}[/]")
+        # Track LLM token usage and cost across the entire run
+        with get_openai_callback() as cb:
+            # Stream with timeout
+            final_state = None
+            timeout = get_settings().graph_timeout_seconds
+            for event in stream_with_timeout(graph, initial_state, timeout):
+                final_state = event
+                next_agent = event.get("next_agent", "")
+                iteration = event.get("iteration_count", 0)
+                if next_agent:
+                    console.print(
+                        f"  [cyan]->[/] iter={iteration} "
+                        f"next=[bold]{next_agent}[/]"
+                    )
 
         if final_state is None:
             console.print("[red]Error: graph produced no output[/]")
@@ -117,12 +124,36 @@ def research(
         console.print(f"  Iterations: {iterations}")
         console.print(
             f"  Sources: {len(sources)} "
-            f"({web_count} web, {article_count} articles, {video_count} videos)"
+            f"({web_count} web, {article_count} articles, "
+            f"{video_count} videos)"
         )
         console.print(f"  Charts: {len(charts)}")
         if charts:
             for c in charts:
                 console.print(f"    [dim]{c}[/]")
+
+        # Token usage summary
+        console.print(
+            f"  LLM usage: {cb.total_tokens:,} tokens "
+            f"({cb.prompt_tokens:,} prompt + "
+            f"{cb.completion_tokens:,} completion), "
+            f"{cb.successful_requests} calls, "
+            f"${cb.total_cost:.4f}"
+        )
+
+        # Report quality validation
+        quality = validate_report(report, final_state)
+        passed, total, failed = report_quality_summary(quality)
+        if failed:
+            console.print(
+                f"  [yellow]Quality: {passed}/{total} checks "
+                f"(failed: {', '.join(failed)})[/]"
+            )
+        else:
+            console.print(
+                f"  [green]Quality: {passed}/{total} checks passed[/]"
+            )
+
         if errors:
             console.print(f"  [yellow]Warnings: {len(errors)}[/]")
             for err in errors:

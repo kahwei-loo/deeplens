@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     article_content_chars: int = 5000  # max chars stored per extracted article
     article_llm_chars: int = 2000      # max chars per article fed to LLM prompts
     graph_timeout_seconds: int = 300   # max wall-clock seconds for graph.stream(); 0 = no limit
+    max_research_tool_calls: int = 15  # max ReACT loop iterations for Research Agent
+    max_report_tool_calls: int = 10    # max ReACT loop iterations for Report Agent
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

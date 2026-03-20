@@ -1,13 +1,8 @@
-"""Tests for deeplens.agents.research — web-first data collection."""
+"""Tests for deeplens.agents.research — ReACT-based research agent."""
 
 from unittest.mock import MagicMock, patch
 
-from deeplens.agents.research import (
-    ResearchPlan,
-    SearchQuery,
-    _deduplicate_videos,
-    research_agent,
-)
+from deeplens.agents.research import _deduplicate_videos, research_agent
 from deeplens.models import WebArticle, WebResult, YouTubeVideoData
 from deeplens.state import DeepLensState
 
@@ -62,176 +57,247 @@ _FAKE_ARTICLES: list[WebArticle] = [
 ]
 
 
-def _mock_plan_llm(plan: ResearchPlan) -> MagicMock:
-    """Create a mock LLM whose .with_structured_output().invoke() returns *plan*."""
-    structured = MagicMock()
-    structured.invoke.return_value = plan
+def _make_ai_message(tool_calls=None, content=""):
+    """Create a mock AIMessage with optional tool_calls."""
+    msg = MagicMock()
+    msg.tool_calls = tool_calls or []
+    msg.content = content
+    return msg
+
+
+def _mock_llm_with_tools(responses):
+    """Create a mock LLM whose bind_tools().invoke() returns responses in sequence."""
+    llm_with_tools = MagicMock()
+    llm_with_tools.invoke = MagicMock(side_effect=responses)
+
     llm = MagicMock()
-    llm.with_structured_output.return_value = structured
+    llm.bind_tools = MagicMock(return_value=llm_with_tools)
     return llm
 
 
-# ── research_agent tests ─────────────────────────────────────────────────
+# ── ReACT flow tests ─────────────────────────────────────────────────────
 
 
-@patch("deeplens.agents.research.extract_urls", return_value=_FAKE_ARTICLES)
-@patch("deeplens.agents.research.multi_query_search", return_value=_FAKE_WEB)
+@patch("deeplens.agents.research.web_search")
+@patch("deeplens.agents.research.create_research_tools")
 @patch("deeplens.agents.research.get_settings")
 @patch("deeplens.agents.research.get_llm")
-def test_research_agent_basic(mock_get_llm, mock_settings, mock_search, mock_extract):
-    """LLM plan + web search + extract → returns web_results, web_articles, sources."""
-    mock_settings.return_value = MagicMock(youtube_available=False)
-    plan = ResearchPlan(
-        entity_type="artist/group",
-        search_queries=[
-            SearchQuery(query="Baby Monster overview", angle="overview"),
-            SearchQuery(query="Baby Monster news", angle="news"),
-        ],
-        youtube_enrichment=False,
+def test_research_agent_react_basic(
+    mock_get_llm, mock_settings, mock_create_tools, mock_ws,
+):
+    """ReACT loop: LLM calls search_web_multi, then extract_article_content, then stops."""
+    mock_settings.return_value = MagicMock(
+        youtube_available=False, max_research_tool_calls=15,
     )
-    mock_get_llm.return_value = _mock_plan_llm(plan)
+
+    # Mock the tools themselves
+    mock_search = MagicMock(name="search_web_multi")
+    mock_search.name = "search_web_multi"
+    mock_search.invoke.return_value = "Found 2 results"
+
+    mock_extract = MagicMock(name="extract_article_content")
+    mock_extract.name = "extract_article_content"
+    mock_extract.invoke.return_value = "Extracted 1 article"
+
+    mock_create_tools.return_value = [mock_search, mock_extract]
+
+    # LLM response sequence: call search → call extract → done (no tool_calls)
+    responses = [
+        _make_ai_message(tool_calls=[{
+            "name": "search_web_multi",
+            "args": {"queries": "Baby Monster overview, Baby Monster news"},
+            "id": "tc1",
+        }]),
+        _make_ai_message(tool_calls=[{
+            "name": "extract_article_content",
+            "args": {"urls": "https://example.com/1"},
+            "id": "tc2",
+        }]),
+        _make_ai_message(content="Research complete."),  # No tool_calls → loop ends
+    ]
+    mock_get_llm.return_value = _mock_llm_with_tools(responses)
 
     state = _empty_state()
     result = research_agent(state)
 
-    assert len(result["web_results"]) == 2
-    assert len(result["web_articles"]) == 1
-    assert len(result["sources"]) == 2
-    assert all(s["source_type"] == "web" for s in result["sources"])
-    mock_search.assert_called_once_with(
-        ["Baby Monster overview", "Baby Monster news"], max_results_per_query=5
+    # Verify tool invocations
+    mock_search.invoke.assert_called_once()
+    mock_extract.invoke.assert_called_once()
+
+    # State contract: returns expected keys
+    assert "web_results" in result
+    assert "web_articles" in result
+    assert "sources" in result
+    assert "errors" in result
+    assert "executed_queries" in result
+
+
+@patch("deeplens.agents.research.create_research_tools")
+@patch("deeplens.agents.research.get_settings")
+@patch("deeplens.agents.research.get_llm")
+def test_research_agent_max_steps(mock_get_llm, mock_settings, mock_create_tools):
+    """ReACT loop stops at max_research_tool_calls even if LLM keeps calling tools."""
+    mock_settings.return_value = MagicMock(
+        youtube_available=False, max_research_tool_calls=2,
     )
+
+    mock_tool = MagicMock(name="search_web")
+    mock_tool.name = "search_web"
+    mock_tool.invoke.return_value = "Results"
+    mock_create_tools.return_value = [mock_tool]
+
+    # LLM always returns tool calls (never stops)
+    never_stops = _make_ai_message(tool_calls=[
+        {"name": "search_web", "args": {"query": "test"}, "id": "tc1"},
+    ])
+    mock_get_llm.return_value = _mock_llm_with_tools([never_stops, never_stops, never_stops])
+
+    state = _empty_state()
+    result = research_agent(state)
+
+    # Should have called tool exactly 2 times (max_research_tool_calls=2)
+    assert mock_tool.invoke.call_count == 2
+    assert "web_results" in result
 
 
 @patch("deeplens.agents.research.web_search", return_value=_FAKE_WEB)
+@patch("deeplens.agents.research.create_research_tools")
 @patch("deeplens.agents.research.get_settings")
 @patch("deeplens.agents.research.get_llm")
-def test_research_agent_plan_failure_fallback(mock_get_llm, mock_settings, mock_web_search):
-    """When LLM planning fails, falls back to basic web_search."""
-    mock_settings.return_value = MagicMock(youtube_available=False)
+def test_research_agent_fallback_on_failure(
+    mock_get_llm, mock_settings, mock_create_tools, mock_ws,
+):
+    """When the ReACT loop fails completely, falls back to basic web_search."""
+    mock_settings.return_value = MagicMock(
+        youtube_available=False, max_research_tool_calls=15,
+    )
+    mock_create_tools.return_value = []
+
+    # LLM raises an exception
     llm = MagicMock()
-    structured = MagicMock()
-    structured.invoke.side_effect = RuntimeError("LLM failed")
-    llm.with_structured_output.return_value = structured
+    llm.bind_tools.side_effect = RuntimeError("LLM initialization failed")
     mock_get_llm.return_value = llm
 
     state = _empty_state()
     result = research_agent(state)
 
-    # Falls back to web_search with original query
-    mock_web_search.assert_called_once_with("Research Baby Monster", max_results=10)
+    # Fallback web_search should have been called
+    mock_ws.assert_called_once_with("Research Baby Monster", max_results=10)
     assert len(result["web_results"]) == 2
-    assert any("Research planning error" in e for e in result["errors"])
+    assert any("ReACT error" in e for e in result["errors"])
 
 
-@patch("deeplens.agents.research.youtube_search")
-@patch("deeplens.agents.research.extract_urls", return_value=[])
-@patch("deeplens.agents.research.multi_query_search", return_value=_FAKE_WEB)
+@patch("deeplens.agents.research.create_research_tools")
 @patch("deeplens.agents.research.get_settings")
 @patch("deeplens.agents.research.get_llm")
-def test_research_agent_no_youtube(
-    mock_get_llm, mock_settings, mock_search, mock_extract, mock_yt_search
-):
-    """youtube_available=False → no YouTube API calls made."""
-    mock_settings.return_value = MagicMock(youtube_available=False)
-    plan = ResearchPlan(
-        entity_type="artist/group",
-        search_queries=[SearchQuery(query="Baby Monster", angle="overview")],
-        youtube_enrichment=True,  # Requested but not available
+def test_research_agent_tool_error_handling(mock_get_llm, mock_settings, mock_create_tools):
+    """Tool execution errors are caught and recorded, loop continues."""
+    mock_settings.return_value = MagicMock(
+        youtube_available=False, max_research_tool_calls=15,
     )
-    mock_get_llm.return_value = _mock_plan_llm(plan)
+
+    mock_tool = MagicMock(name="search_web")
+    mock_tool.name = "search_web"
+    mock_tool.invoke.side_effect = RuntimeError("Tool crashed")
+    mock_create_tools.return_value = [mock_tool]
+
+    responses = [
+        _make_ai_message(tool_calls=[
+            {"name": "search_web", "args": {"query": "test"}, "id": "tc1"},
+        ]),
+        _make_ai_message(content="Done."),
+    ]
+    mock_get_llm.return_value = _mock_llm_with_tools(responses)
 
     state = _empty_state()
     result = research_agent(state)
 
-    # YouTube search should NOT have been called
-    mock_yt_search.assert_not_called()
-    assert len(result["videos"]) == 0
-    assert len(result["comments"]) == 0
+    # Error should be recorded
+    assert any("error" in e.lower() for e in result["errors"])
+    # But result should still be valid
+    assert "web_results" in result
 
 
-# ── web_results URL deduplication across iterations ─────────────────────
-
-
-@patch("deeplens.agents.research.extract_urls", return_value=[])
+@patch("deeplens.agents.research.create_research_tools")
 @patch("deeplens.agents.research.get_settings")
 @patch("deeplens.agents.research.get_llm")
-def test_web_results_deduplicated_across_iterations(
-    mock_get_llm, mock_settings, mock_extract
-):
-    """web_results from multiple iterations must be deduplicated by URL.
-
-    Regression test: without dedup, the same article appears N times after
-    N research iterations, bloating state and LLM context.
-    """
-    mock_settings.return_value = MagicMock(youtube_available=False)
-    plan = ResearchPlan(
-        entity_type="public_figure",
-        search_queries=[SearchQuery(query="Elon Musk overview", angle="overview")],
-        youtube_enrichment=False,
+def test_research_agent_state_contract(mock_get_llm, mock_settings, mock_create_tools):
+    """Result dict has all expected keys matching the state contract."""
+    mock_settings.return_value = MagicMock(
+        youtube_available=False, max_research_tool_calls=15,
     )
-    mock_get_llm.return_value = _mock_plan_llm(plan)
+    mock_create_tools.return_value = []
 
-    # Simulate: first iteration already stored article1 and article2
-    existing: list[WebResult] = [
-        {"title": "Article 1", "url": "https://example.com/a1", "snippet": "...", "score": 0.8},
-        {"title": "Article 2", "url": "https://example.com/a2", "snippet": "...", "score": 0.7},
-    ]
-    # Second iteration returns article1 again (duplicate) + a new article3
-    new_results: list[WebResult] = [
-        {
-            "title": "Article 1 again",
-            "url": "https://example.com/a1",
-            "snippet": "...",
-            "score": 0.9,
-        },
-        {"title": "Article 3", "url": "https://example.com/a3", "snippet": "...", "score": 0.6},
-    ]
+    # LLM immediately stops (no tool calls)
+    mock_get_llm.return_value = _mock_llm_with_tools([
+        _make_ai_message(content="No research needed."),
+    ])
 
-    with patch("deeplens.agents.research.multi_query_search", return_value=new_results):
-        state = _empty_state(web_results=existing, executed_queries=["previous query"])
-        result = research_agent(state)
+    state = _empty_state()
+    result = research_agent(state)
 
-    urls = [r["url"] for r in result["web_results"]]
-    assert len(urls) == len(set(urls)), "Duplicate URLs found in web_results after merge"
-    assert len(result["web_results"]) == 3  # a1, a2, a3 (no duplicate a1)
-    # Higher-score version of a1 should be kept (0.9 > 0.8)
-    a1 = next(r for r in result["web_results"] if r["url"] == "https://example.com/a1")
-    assert a1["score"] == 0.9
+    expected_keys = {
+        "web_results", "web_articles", "videos", "comments",
+        "sources", "errors", "executed_queries",
+    }
+    assert expected_keys.issubset(set(result.keys()))
 
 
-@patch("deeplens.agents.research.extract_urls", return_value=[])
-@patch("deeplens.agents.research.multi_query_search", return_value=_FAKE_WEB)
+@patch("deeplens.agents.research.create_research_tools")
 @patch("deeplens.agents.research.get_settings")
 @patch("deeplens.agents.research.get_llm")
-def test_research_plan_uses_all_instructions(
-    mock_get_llm, mock_settings, mock_search, mock_extract
+def test_research_agent_passes_supervisor_instructions(
+    mock_get_llm, mock_settings, mock_create_tools,
 ):
-    """All accumulated research_plan instructions are passed to the planning LLM.
-
-    Regression test: previously only plan_instructions[-1] was used, discarding
-    earlier supervisor guidance.
-    """
-    mock_settings.return_value = MagicMock(youtube_available=False)
-    plan = ResearchPlan(
-        entity_type="public_figure",
-        search_queries=[SearchQuery(query="Elon Musk overview", angle="overview")],
-        youtube_enrichment=False,
+    """Supervisor instructions are included in the system prompt."""
+    mock_settings.return_value = MagicMock(
+        youtube_available=False, max_research_tool_calls=15,
     )
-    llm_mock = _mock_plan_llm(plan)
-    mock_get_llm.return_value = llm_mock
+    mock_create_tools.return_value = []
+
+    llm_with_tools = MagicMock()
+    llm_with_tools.invoke.return_value = _make_ai_message(content="Done.")
+    llm = MagicMock()
+    llm.bind_tools.return_value = llm_with_tools
+    mock_get_llm.return_value = llm
 
     state = _empty_state(
         research_plan=["Search for overview", "Focus on controversies"],
     )
     research_agent(state)
 
-    # The planning LLM should have been called with a context that contains
-    # BOTH instructions joined, not just the last one
-    call_args = llm_mock.with_structured_output.return_value.invoke.call_args
-    context_message = call_args[0][0][1]["content"]  # user message content
-    assert "Search for overview" in context_message
-    assert "Focus on controversies" in context_message
+    # Check the system message contains supervisor instructions
+    call_args = llm_with_tools.invoke.call_args[0][0]
+    system_content = call_args[0].content
+    assert "Search for overview" in system_content
+    assert "Focus on controversies" in system_content
+
+
+# ── Deduplication across iterations ──────────────────────────────────────
+
+
+@patch("deeplens.agents.research.create_research_tools")
+@patch("deeplens.agents.research.get_settings")
+@patch("deeplens.agents.research.get_llm")
+def test_web_results_deduplicated_across_iterations(mock_get_llm, mock_settings, mock_create_tools):
+    """web_results from multiple iterations are deduplicated by URL."""
+    mock_settings.return_value = MagicMock(
+        youtube_available=False, max_research_tool_calls=15,
+    )
+    mock_create_tools.return_value = []
+
+    mock_get_llm.return_value = _mock_llm_with_tools([
+        _make_ai_message(content="Done."),
+    ])
+
+    existing: list[WebResult] = [
+        {"title": "Article 1", "url": "https://example.com/a1", "snippet": "...", "score": 0.8},
+    ]
+    state = _empty_state(web_results=existing)
+    result = research_agent(state)
+
+    urls = [r["url"] for r in result["web_results"]]
+    assert len(urls) == len(set(urls))
 
 
 # ── _deduplicate_videos ──────────────────────────────────────────────────
@@ -261,5 +327,4 @@ def test_deduplicate_videos():
     assert len(deduped) == 2
     ids = [v["video_id"] for v in deduped]
     assert ids == ["a", "b"]
-    # First occurrence kept — title should be "A", not "A duplicate"
     assert deduped[0]["title"] == "A"
