@@ -9,7 +9,7 @@ description = "Multi-agent entity research system built with LangGraph"
 requires-python = ">=3.11"
 dependencies = [
     "langgraph>=0.2",
-    "langchain-openai>=0.2",
+    "langchain-openai>=1.1.12",
     "langchain-community>=0.3",
     "openai>=1.0",
     "google-api-python-client>=2.0",
